@@ -1,0 +1,46 @@
+  METHOD businesspartners_get_entity.
+
+    DATA(wa_key) = VALUE #( it_key_tab[ name = 'Partner' ] OPTIONAL ).
+
+    IF wa_key IS NOT INITIAL.
+      SELECT SINGLE partner
+              title
+              name_last
+              bu_sort1
+              langu_corr
+  FROM but000
+  INTO ( er_entity-partner, er_entity-title, er_entity-name, er_entity-search1, er_entity-langu_corr )
+  WHERE partner = wa_key-value.
+
+      SELECT SINGLE banks bankl bankn
+      FROM but0bk
+      INTO ( er_entity-bank_country, er_entity-bank_key, er_entity-bank_acc )
+      WHERE partner EQ er_entity-partner.
+      IF sy-subrc EQ 0.
+        SELECT SINGLE iban
+          FROM tiban
+          INTO er_entity-bank_iban
+          WHERE banks EQ er_entity-bank_country
+            AND bankl EQ er_entity-bank_key
+            AND bankn EQ er_entity-bank_acc.
+      ENDIF.
+      SELECT SINGLE city1 post_code1 street country langu
+        FROM adrc INNER JOIN but020 ON adrc~addrnumber = but020~addrnumber
+        INTO ( er_entity-city1, er_entity-post_code1, er_entity-street, er_entity-country, er_entity-langu_corr )
+        WHERE partner = er_entity-partner.
+
+      SELECT SINGLE bukrs zuawa akont zwels zterm FROM lfb1
+        INTO ( er_entity-company, er_entity-sort_key, er_entity-reconciliation, er_entity-methods, er_entity-terms )
+        WHERE lifnr EQ er_entity-partner.
+
+      SELECT SINGLE ekorg waers zterm FROM lfm1
+        INTO ( er_entity-pur_org, er_entity-currency, er_entity-m_terms )
+        WHERE lifnr EQ er_entity-partner.
+      SELECT SINGLE taxtype taxnum
+        FROM dfkkbptaxnum
+        INTO ( er_entity-taxtype, er_entity-taxnum )
+        WHERE partner = er_entity-partner.
+
+    ENDIF.
+
+  ENDMETHOD.
