@@ -1,0 +1,386 @@
+METHOD businesspartners_create_entity.
+**TRY.
+*CALL METHOD SUPER->BUSINESSPARTNERS_CREATE_ENTITY
+*  EXPORTING
+*    IV_ENTITY_NAME          =
+*    IV_ENTITY_SET_NAME      =
+*    IV_SOURCE_NAME          =
+*    IT_KEY_TAB              =
+**    io_tech_request_context =
+*    IT_NAVIGATION_PATH      =
+**    io_data_provider        =
+**  IMPORTING
+**    er_entity               =
+*    .
+**  CATCH /iwbep/cx_mgw_busi_exception.
+**  CATCH /iwbep/cx_mgw_tech_exception.
+**ENDTRY.
+
+    DATA: wa_entity LIKE
+          er_entity.
+    DATA: ls_info TYPE zodata_bp_log.
+
+    TRY.
+        CALL METHOD io_data_provider->read_entry_data
+          IMPORTING
+            es_data = wa_entity.
+
+        IF wa_entity-name IS NOT INITIAL.
+
+
+
+
+
+          DATA:
+            s_bp            TYPE cvis_ei_extern,
+            t_bp            TYPE cvis_ei_extern_t,
+            t_address       TYPE bus_ei_bupa_address_t,
+            t_role          TYPE bus_ei_bupa_roles_t,
+            t_ident_numbers TYPE bus_ei_bupa_identification_t,
+            t_taxnumbers    TYPE bus_ei_bupa_taxnumber_t,
+            t_return        TYPE bapiretm,
+            wa_return       LIKE LINE OF t_return,
+            t_object        TYPE bapiretct,
+            wa_object       LIKE LINE OF t_object,
+            v_bu_partner    TYPE bu_partner,
+            v_error         TYPE abap_bool.
+          DATA: lt_company TYPE vmds_ei_company_t,
+                ls_company LIKE LINE OF lt_company.
+          DATA: lt_purchasing TYPE vmds_ei_purchasing_t,
+                ls_purchasing TYPE vmds_ei_purchasing.
+          DATA : c_task VALUE 'I'.
+          DATA: s_guid TYPE but000-partner_guid.
+          SELECT SINGLE partner partner_guid FROM but000
+            INTO ( wa_entity-partner, s_guid )
+            WHERE partner EQ wa_entity-partner.
+          IF sy-subrc EQ 0.
+            c_task = 'U'.
+          ELSE.
+            TRY.
+                DATA(v_guid) = cl_system_uuid=>if_system_uuid_static~create_uuid_c32( ).
+              CATCH cx_uuid_error INTO DATA(r_uuid_exc).
+                MESSAGE r_uuid_exc->get_text( ) TYPE 'E'.
+            ENDTRY.
+          ENDIF.
+*------------------------------------------------------------------------------
+* Header and common central data
+*------------------------------------------------------------------------------
+          CLEAR s_bp.
+          s_bp-partner-header-object_task = c_task. "'I' for new BP
+          IF v_guid IS NOT INITIAL.
+            s_bp-partner-header-object_instance-bpartnerguid = v_guid.
+          ELSE.
+            s_bp-partner-header-object_instance-bpartnerguid = s_guid.
+          ENDIF.
+          s_bp-partner-header-object_instance-bpartner = wa_entity-partner.
+* Category: 1 for Person, 2 for Organization, 3 for Group
+          s_bp-partner-central_data-common-data-bp_control-category = '1'.
+* The grouping depends on the system settings
+          s_bp-partner-central_data-common-data-bp_control-grouping = 'ZISA'.
+
+          s_bp-partner-central_data-common-data-bp_centraldata-searchterm1 = wa_entity-search1.
+          s_bp-partner-central_data-common-data-bp_person-firstname  = wa_entity-name.
+          s_bp-partner-central_data-common-data-bp_person-lastname  = wa_entity-name..
+* Mark as changed
+          s_bp-partner-central_data-common-datax-bp_person-firstname = abap_true.
+          s_bp-partner-central_data-common-datax-bp_person-lastname = abap_true.
+          s_bp-partner-central_data-common-datax-bp_centraldata-searchterm1 = abap_true.
+*  s_bp-partner-central_data-common-datax-bp_organization-name2 = abap_true.
+
+*------------------------------------------------------------------------------
+* VAT number (needed for BPs located in the EU)
+*
+* Number is normally validated by function module VAT_REGISTRATION_NUMBER_CHECK
+* Tax types are stored in table TFKTAXNUMTYPE
+*------------------------------------------------------------------------------
+*          REFRESH t_taxnumbers.
+*          APPEND INITIAL LINE TO t_taxnumbers ASSIGNING FIELD-SYMBOL(<fs_taxnumbers>).
+*          <fs_taxnumbers>-task               = c_task_insert.
+*          <fs_taxnumbers>-data_key-taxtype   = wa_entity-taxtype.
+*          <fs_taxnumbers>-data_key-taxnumber = wa_entity-taxnum.
+*          s_bp-partner-central_data-taxnumber-taxnumbers = t_taxnumbers.
+
+*------------------------------------------------------------------------------
+* Address data
+*------------------------------------------------------------------------------
+          REFRESH t_address.
+          APPEND INITIAL LINE TO t_address ASSIGNING FIELD-SYMBOL(<fs_address>).
+          <fs_address>-task = c_task.
+          SELECT SINGLE address_guid FROM but020
+            WHERE partner EQ @wa_entity-partner
+            INTO @DATA(lv_addguid).
+          IF sy-subrc <> 0.
+            <fs_address>-data_key-guid = s_guid.
+          ELSE.
+            <fs_address>-data_key-guid = lv_addguid.
+          ENDIF.
+* Operations are store in table TB008S
+          <fs_address>-data_key-operation           = 'XXDFLT'. "Standard operation
+          <fs_address>-data-postal-data-city        = wa_entity-city1.
+          <fs_address>-data-postal-data-postl_cod1  = wa_entity-post_code1.
+          <fs_address>-data-postal-data-street      = wa_entity-street.
+          <fs_address>-data-postal-data-country     = wa_entity-country.
+          <fs_address>-data-postal-data-langu       = 'E'.
+
+* Mark as changed
+          <fs_address>-data-postal-datax-city       = abap_true.
+          <fs_address>-data-postal-datax-postl_cod1 = abap_true.
+          <fs_address>-data-postal-datax-street     = abap_true.
+          <fs_address>-data-postal-datax-country    = abap_true.
+          <fs_address>-data-postal-datax-region     = abap_true.
+          <fs_address>-data-postal-datax-langu      = abap_true.
+
+* Add address to main structure
+          s_bp-partner-central_data-address-addresses = t_address.
+
+*------------------------------------------------------------------------------
+* Bank Details
+*------------------------------------------------------------------------------
+          DATA: lt_bankdetails TYPE bus_ei_bupa_bankdetail_t,
+                ls_bamkdetails LIKE LINE OF lt_bankdetails.
+          DATA: ls_bankdetails LIKE LINE OF lt_bankdetails.
+          CLEAR lt_bankdetails.
+          REFRESH lt_bankdetails.
+*    DATA: ind TYPE sy-tabix.
+*    IF lt_bank IS NOT INITIAL.
+*      LOOP AT lt_bank INTO ls_bank WHERE id = ls_vendor-id.
+*        ind = ind + 1.
+          ls_bankdetails-task = c_task.
+*        AT NEW id.
+*          CLEAR ind.
+*          ind = ind + 1.
+*        ENDAT.
+          ls_bankdetails-data_key = '001'.
+          ls_bankdetails-data-bank_ctry = wa_entity-bank_country.
+          ls_bankdetails-data-bank_key  = wa_entity-bank_key.
+          ls_bankdetails-data-bank_acct = wa_entity-bank_acc.
+          ls_bankdetails-data-iban = wa_entity-bank_iban.
+*        SELECT bankn FROM tiban UP TO 1 ROWS INTO
+*         ls_bankdetails-data-bank_acct
+*          WHERE banks = ls_bank-banks
+*          AND bankl = ls_Bank-bankl
+*          AND iban = er_entity-bank-iban
+*          ORDER BY valid_from.
+*        ENDSELECT.
+
+*      ls_bankdetails-data-bank_acct = ls_bank-iban.
+
+          ls_bankdetails-datax-bank_ctry = 'X'.
+          ls_bankdetails-datax-bank_key  = 'X'.
+          ls_bankdetails-datax-bank_acct = 'X'.
+          ls_bankdetails-datax-iban = 'X'.
+
+          APPEND ls_bankdetails TO lt_bankdetails.
+
+*      ENDLOOP.
+          s_bp-partner-central_data-bankdetail-bankdetails = lt_bankdetails.
+*    ENDIF.
+
+
+*------------------------------------------------------------------------------
+* Roles
+*------------------------------------------------------------------------------
+          REFRESH t_role.
+          APPEND INITIAL LINE TO t_role ASSIGNING FIELD-SYMBOL(<fs_role0>).
+          <fs_role0>-task              = c_tasK.
+          <fs_role0>-data_key          = '000000'. "Role key - BP Gen
+*<fs_role>-data_key          = 'FLCU01'. "Role key - customer
+
+* Add role to main structure
+          s_bp-partner-central_data-role-roles = t_role.
+
+
+          APPEND INITIAL LINE TO t_role ASSIGNING FIELD-SYMBOL(<fs_role>).
+          <fs_role>-task              = c_tasK.
+          <fs_role>-data_key          = 'FLVN01'. "Role key - MM Vendor
+*<fs_role>-data_key          = 'FLCU01'. "Role key - customer
+
+* Add role to main structure
+          s_bp-partner-central_data-role-roles = t_role.
+
+          APPEND INITIAL LINE TO t_role ASSIGNING FIELD-SYMBOL(<fs_role2>).
+          <fs_role2>-task              = c_tasK.
+          <fs_role2>-data_key          = 'FLVN00'. "Role key - FI Vendor
+*<fs_role>-data_key          = 'FLCU01'. "Role key - customer
+
+* Add role to main structure
+          s_bp-partner-central_data-role-roles = t_role.
+
+*------------------------------------------------------------------------------
+** Set the Company Code and GL Account
+*------------------------------------------------------------------------------
+
+          s_bp-partner-header-object_task = c_tasK.
+          s_Bp-vendor-header-object_task = c_tasK.
+          REFRESH: 	lt_company[].
+          CLEAR ls_company.
+          ls_company-task               = c_tasK.
+          ls_company-data_key-bukrs     = wa_entity-company.
+          CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+            EXPORTING
+              input  = wa_entity-reconciliation
+            IMPORTING
+              output = wa_entity-reconciliation.
+
+          ls_company-data-akont         = wa_entity-reconciliation.                            "Reconciliation Account
+          ls_company-data-zuawa         = wa_entity-sort_key.                                  "Sort Key
+*    ls_company-data-fdgrv      = ‘M1′.                                                    "Cash Management Group
+          ls_company-data-zterm         = wa_entity-terms.                                     "Payment Terms
+          ls_company-data-zwels         = wa_entity-methods.
+          ls_company-data-reprf         = 'X'.
+          ls_company-datax-akont        = 'X'.
+          ls_company-datax-zuawa        = 'X'.
+*    ls_company-datax-fdgrv     = ‘X’.
+          ls_company-datax-zwels        = 'X'.
+          ls_company-datax-zterm        = 'X'.
+          ls_company-datax-reprf        = 'X'.
+          APPEND ls_company TO lt_company.
+          s_bp-vendor-company_data-company = lt_company.
+
+
+
+*------------------------------------------------------------------------------
+** Set the Purchasing data
+*------------------------------------------------------------------------------
+
+
+*    s_bp-partner-header-object_task = 'I'.
+*    s_Bp-vendor-header-object_task = 'I'.
+          REFRESH: lt_purchasing[].
+          CLEAR ls_purchasing.
+          ls_purchasing-task               = c_tasK.
+          ls_purchasing-data_key-ekorg     = wa_entity-pur_org.
+          ls_purchasing-data-waers         = wa_entity-currency.
+          ls_purchasing-data-zterm         = wa_entity-m_terms.
+          ls_purchasing-datax-waers        = 'X'.
+          ls_purchasing-datax-zterm        = 'X'.
+          APPEND ls_purchasing TO lt_purchasing.
+          s_bp-vendor-purchasing_data-purchasing = lt_purchasing.
+
+*------------------------------------------------------------------------------
+* Validate data
+*------------------------------------------------------------------------------
+          cl_md_bp_maintain=>validate_single(
+            EXPORTING
+              i_data        = s_bp
+            IMPORTING
+              et_return_map = DATA(t_return_map)
+          ).
+
+          IF line_exists( t_return_map[ type = 'E' ] ) OR
+             line_exists( t_return_map[ type = 'A' ] ).
+            LOOP AT t_return_map INTO DATA(s_return_map).
+              WRITE:/ s_return_map-message.
+              er_entity-message = s_return_map-message.
+              MOVE-CORRESPONDING wa_entity TO ls_info.
+              MOVE er_entity-message TO ls_info-info .
+              MOVE '@5C@' TO ls_info-flag.  "Red light; negative
+              ls_info-zuser = sy-uname.
+              ls_info-zdate = sy-datum.
+              CONCATENATE sy-uzeit(2) sy-uzeit+2(2) sy-uzeit+4(2) INTO ls_info-ztime SEPARATED BY ':'.
+              INSERT zodata_bp_log FROM ls_info.
+              COMMIT WORK.
+            ENDLOOP.
+            EXIT.
+          ENDIF.
+
+*------------------------------------------------------------------------------
+* Call API
+*------------------------------------------------------------------------------
+* Add single BP to IMPORTING table
+          INSERT s_bp INTO TABLE t_bp.
+
+          cl_md_bp_maintain=>maintain(
+            EXPORTING
+              i_data     = t_bp
+              i_test_run = ''
+            IMPORTING
+              e_return   = t_return
+          ).
+
+* Check result
+          LOOP AT t_return INTO DATA(s_return).
+            LOOP AT s_return-object_msg INTO DATA(s_msg).
+              IF s_msg-type = 'E' OR s_msg-type = 'A'.
+*       Error occurred
+                v_error = abap_true.
+              ENDIF.
+              WRITE:/ s_msg-message.
+              MOVE-CORRESPONDING wa_entity TO ls_info.
+              MOVE er_entity-message TO ls_info-info .
+              MOVE '@5C@' TO ls_info-flag.  "Red light; negative
+              ls_info-zuser = sy-uname.
+              ls_info-zdate = sy-datum.
+              CONCATENATE sy-uzeit(2) sy-uzeit+2(2) sy-uzeit+4(2) INTO ls_info-ztime SEPARATED BY ':'.
+            ENDLOOP.
+          ENDLOOP.
+          IF v_error IS INITIAL.
+
+*       Non-test mode => Perform COMMIT
+*            CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'.
+            CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+              EXPORTING
+                wait = 'X'
+*             IMPORTING
+*               RETURN        =
+              .
+
+*       Get number of new BP (it's not returned by the API)
+            IMPORT lv_partner TO v_bu_partner FROM MEMORY ID 'BUP_MEMORY_PARTNER'.
+*      WRITE:/ |Business Partner { v_bu_partner } has been created.|.
+            er_entity-partner = v_bu_partner.
+            DATA: ls_key_tab LIKE LINE OF it_key_tab.
+            DATA: lt_key_tab LIKE it_key_tab.
+
+            ls_key_tab-name = 'Partner'.
+            ls_key_tab-value = v_bu_partner.
+            APPEND ls_key_tab TO lt_key_tab.
+            TRY.
+                CALL METHOD me->businesspartners_get_entity
+                  EXPORTING
+                    iv_entity_name     = 'BusinessPartner'
+                    iv_entity_set_name = 'BusinessPartnerSet'
+                    iv_source_name     = 'BusinessPartner'
+                    it_key_tab         = lt_key_tab
+*                   io_request_object  =
+*                   io_tech_request_context =
+                    it_navigation_path = it_navigation_path
+                  IMPORTING
+                    er_entity          = er_entity
+*                   es_response_context     =
+                  .
+              CATCH /iwbep/cx_mgw_busi_exception.
+              CATCH /iwbep/cx_mgw_tech_exception.
+            ENDTRY.
+
+            IF c_task EQ 'U'.
+              er_entity-message = 'Partner % has been updated'.
+              REPLACE '%' WITH er_entity-partner INTO er_entity-message.
+              MOVE-CORRESPONDING wa_entity TO ls_info.
+              MOVE '@08@' TO ls_info-flag."  Green light; positive
+              MOVE er_entity-message TO ls_info-info.
+              ls_info-zuser = sy-uname.
+              ls_info-zdate = sy-datum.
+              CONCATENATE sy-uzeit(2) sy-uzeit+2(2) sy-uzeit+4(2) INTO ls_info-ztime SEPARATED BY ':'.
+            ELSE.
+              er_entity-message = 'Partner % has been created'.
+              REPLACE '%' WITH er_entity-partner INTO er_entity-message.
+              MOVE-CORRESPONDING wa_entity TO ls_info.
+              MOVE '@08@' TO ls_info-flag."  Green light; positive
+              MOVE er_entity-message TO ls_info-info.
+              ls_info-zuser = sy-uname.
+              ls_info-zdate = sy-datum.
+              CONCATENATE sy-uzeit(2) sy-uzeit+2(2) sy-uzeit+4(2) INTO ls_info-ztime SEPARATED BY ':'.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+      CATCH /iwbep/cx_mgw_tech_exception.
+    ENDTRY.
+
+    IF ls_info IS NOT INITIAL.
+      INSERT zodata_bp_log FROM ls_info.
+      COMMIT WORK.
+    ENDIF.
+
+
+  ENDMETHOD.
