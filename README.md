@@ -1,4 +1,3 @@
-![image](https://github.com/aidamate13/oData_BP/assets/164672120/64b430be-5890-4dd7-899a-2de9793e91e0)# oData_BP
 oData service for BP creation via HTTPS request
 
 Purpose of the Service: Third party application should be able to create Business Partners in SAP 
@@ -13,3 +12,10 @@ Open project: ZBP_CREATION_ODATA
 
 Service Maintnance
 
+Class Implementation
+
+![image](https://github.com/aidamate13/oData_BP/assets/164672120/4477fd87-00bf-4e24-b138-9311651b5a84)
+
+
+Fetch CSRF Token and pass it in the post request of bp creation
+![image](https://github.com/aidamate13/oData_BP/assets/164672120/da2be7b3-1cf6-4544-a06f-8ed608f512b8)
