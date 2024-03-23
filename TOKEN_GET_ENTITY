@@ -1,0 +1,4 @@
+  method TOKEN_GET_ENTITY.
+    DATA(wa_key) = VALUE #( it_key_tab[ name = 'csrf_token' ] OPTIONAL ).
+    ER_ENTITY-csrf_token = 'X'.
+  endmethod.
